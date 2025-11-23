@@ -24,7 +24,11 @@ const app = express();
 // Bật CORS cho frontend (localhost:3000)
 app.use(
   cors({
-    origin: "http://localhost:3000", // cho phép frontend gọi API
+    origin: [
+      "http://localhost:3000",
+      "https://your-frontend-domain.vercel.app",
+      "*",
+    ], // cho phép frontend gọi API
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -81,5 +85,5 @@ app.use("/api/replies", replyRoutes);
 app.use("/api/installment", installmentRoutes);
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`✅ Server is running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
