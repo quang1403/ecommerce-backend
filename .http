@@ -1,0 +1,23 @@
+POST http://localhost:5000/api/upload
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="image"; filename="ep_cam.jpg"
+Content-Type: image/jpeg
+
+< F:/Lưu ảnh/ep_cam.jpg
+------WebKitFormBoundary--
+
+
+
+
+#cách test trên postman
+#1 Chọn phương thức POST
+#2 Nhập URL http://localhost:5000/api/upload
+#3 Chọn tab Body
+#4 Chọn form-data
+#5 Nhập key là image, chọn kiểu File
+#6 Chọn file ep_cam.jpg từ máy tính của bạn
+#7 Nhấn Send để gửi yêu cầu
+
+#
