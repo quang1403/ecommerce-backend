@@ -26,7 +26,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "https://your-frontend-domain.vercel.app",
+      "https://ecommerce-fontend-drab.vercel.app",
       "*",
     ], // cho phép frontend gọi API
     methods: ["GET", "POST", "PUT", "DELETE"],
