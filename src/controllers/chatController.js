@@ -127,6 +127,10 @@ exports.askChatbot = async (req, res) => {
       // FE expect 'product' (singular) với first product
       const firstProduct = response.data.products[0];
 
+      console.log(
+        `🎁 Preparing product for actions: ${firstProduct.name} (ID: ${firstProduct._id})`
+      );
+
       // Tính giá sau giảm cho product
       const originalPrice = firstProduct.price;
       const discount = firstProduct.discount || 0;
@@ -142,6 +146,20 @@ exports.askChatbot = async (req, res) => {
         finalPrice: finalPrice,
         discountAmount: discount > 0 ? originalPrice - finalPrice : 0,
       };
+
+      // Thêm colorVariants vào response data nếu có
+      if (firstProduct.colorVariants && firstProduct.colorVariants.length > 0) {
+        finalResponse.colorVariants = firstProduct.colorVariants;
+        console.log(
+          `✅ Trả về ${firstProduct.colorVariants.length} colorVariants cho FE`
+        );
+      } else if (firstProduct.color && firstProduct.color.length > 0) {
+        // Fallback về color legacy
+        finalResponse.colors = firstProduct.color;
+        console.log(
+          `⚠️ Fallback về color legacy: ${firstProduct.color.join(", ")}`
+        );
+      }
 
       // Thêm actions cho product
       finalResponse.actions = [
@@ -166,6 +184,12 @@ exports.askChatbot = async (req, res) => {
           discountAmount: pDiscount > 0 ? pOriginalPrice - pFinalPrice : 0,
         };
       });
+    } else {
+      console.log(
+        `⚠️ No products in response for intent: ${
+          response.intent
+        }, message: "${message.substring(0, 50)}..."`
+      );
     }
 
     // Spread remaining data
@@ -173,6 +197,12 @@ exports.askChatbot = async (req, res) => {
       const { products, ...otherData } = response.data;
       Object.assign(finalResponse, otherData);
     }
+
+    console.log(
+      `📤 Final response: intent=${
+        finalResponse.intent
+      }, hasProduct=${!!finalResponse.product}, hasActions=${!!finalResponse.actions}`
+    );
 
     res.json(finalResponse);
   } catch (error) {

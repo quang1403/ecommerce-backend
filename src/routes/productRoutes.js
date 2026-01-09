@@ -19,11 +19,15 @@ const upload = multer({ storage: storage });
         PRODUCT ROUTES
 ========================== */
 
-//  Lấy sản phẩm theo brandId
+//  Lấy sản phẩm theo brandId (optionally filtered by category)
 router.get("/brand/:brandId", async (req, res) => {
   try {
     const { brandId } = req.params;
-    const products = await Product.find({ brand: brandId })
+    const { category } = req.query;
+    const query = { brand: brandId };
+    if (category) query.category = category;
+
+    const products = await Product.find(query)
       .populate("brand", "name logo")
       .populate("category", "name");
     res.json({ success: true, data: products });
@@ -32,10 +36,14 @@ router.get("/brand/:brandId", async (req, res) => {
   }
 });
 
-//  Lấy danh sách brand từ sản phẩm
+//  Lấy danh sách brand từ sản phẩm (optionally filtered by category)
 router.get("/brands", async (req, res) => {
   try {
-    const products = await Product.find({}, "brand").populate(
+    const { category } = req.query;
+    const query = {};
+    if (category) query.category = category; // only products in this category
+
+    const products = await Product.find(query, "brand").populate(
       "brand",
       "name logo"
     );

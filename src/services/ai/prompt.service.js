@@ -7,6 +7,17 @@ class PromptService {
   constructor() {
     this.baseSystemPrompt = `Bạn là trợ lý tư vấn bán hàng chuyên nghiệp của cửa hàng điện thoại Phone Store.
 
+🏪 CONTEXT QUAN TRỌNG:
+- Phone Store là cửa hàng bán ĐIỆN THOẠI, TABLET, PHỤ KIỆN (tai nghe, sạc, ốp lưng...)
+- KHÔNG bán máy chơi game console (PlayStation, Xbox, Nintendo Switch...)
+- KHÔNG bán laptop, PC, camera riêng biệt
+
+📱 KHI KHÁCH HỎI:
+- "máy chơi game" → Hiểu là ĐIỆN THOẠI CHƠI GAME (gaming phone)
+- "máy chụp ảnh" → Hiểu là ĐIỆN THOẠI CAMERA TỐT (camera phone)
+- "máy pin trâu" → Hiểu là ĐIỆN THOẠI PIN KHỦNG (long battery phone)
+- Nếu khách hỏi sản phẩm NGOÀI phạm vi (PlayStation, laptop...) → Lịch sự giải thích chỉ bán điện thoại
+
 Nhiệm vụ của bạn:
 - Tư vấn điện thoại, phụ kiện phù hợp với nhu cầu khách hàng
 - Giải đáp thắc mắc về sản phẩm, thông số kỹ thuật, giá cả
@@ -21,7 +32,17 @@ Phong cách giao tiếp:
 - Đưa ra gợi ý cụ thể khi khách hàng chưa rõ nhu cầu
 - Luôn hỏi thêm thông tin nếu cần để tư vấn chính xác hơn
 
-QUAN TRỌNG: Chỉ tư vấn các sản phẩm CÓ TRONG DANH SÁCH bên dưới. Không bịa đặt hoặc giới thiệu sản phẩm không có sẵn.`;
+⚠️ QUY TẮC BẮT BUỘC (STRICT MODE):
+1. CHỈ tư vấn các sản phẩm CÓ TRONG DANH SÁCH được cung cấp
+2. TUYỆT ĐỐI KHÔNG được bịa đặt, tưởng tượng, hoặc đề xuất sản phẩm KHÔNG CÓ trong danh sách
+3. TUYỆT ĐỐI KHÔNG được sử dụng kiến thức bên ngoài để gợi ý tên sản phẩm, model, hoặc giá
+4. Nếu danh sách trống hoặc không tìm thấy sản phẩm phù hợp, hãy lịch sự thông báo và hỏi thêm thông tin
+5. Khi khách hỏi về sản phẩm không có, đừng gợi ý sản phẩm tương tự NGOÀI danh sách
+
+❌ CẤM TUYỆT ĐỐI:
+- Đề cập bất kỳ tên sản phẩm nào KHÔNG CÓ trong danh sách (ví dụ: Redmi Note 11 Pro, Realme 9 Pro, Galaxy A32...)
+- Nói "có thể có sản phẩm X" nếu X không có trong danh sách
+- Dùng kiến thức của bạn về sản phẩm ngoài hệ thống để tư vấn`;
   }
 
   /**
@@ -29,9 +50,15 @@ QUAN TRỌNG: Chỉ tư vấn các sản phẩm CÓ TRONG DANH SÁCH bên dướ
    * @param {Array} products
    * @param {string} message
    * @param {string} conversationContext
+   * @param {boolean} isAskingColors - Có phải đang hỏi về màu sắc không
    * @returns {string}
    */
-  createProductInquiryPrompt(products, message, conversationContext = "") {
+  createProductInquiryPrompt(
+    products,
+    message,
+    conversationContext = "",
+    isAskingColors = false
+  ) {
     let productContext = "";
 
     if (products.length > 0) {
@@ -45,6 +72,22 @@ QUAN TRỌNG: Chỉ tư vấn các sản phẩm CÓ TRONG DANH SÁCH bên dướ
             ? Math.round(originalPrice * (1 - discount / 100))
             : originalPrice;
 
+        // Xử lý thông tin màu sắc
+        let colorInfo = "";
+        if (product.colorVariants && product.colorVariants.length > 0) {
+          const colors = product.colorVariants
+            .map(
+              (v) =>
+                `${v.color} (${v.colorCode}, còn ${v.stock || 0} máy, sku: ${
+                  v.sku
+                })`
+            )
+            .join(", ");
+          colorInfo = `   - Màu sắc: ${colors}\n`;
+        } else if (product.color && product.color.length > 0) {
+          colorInfo = `   - Màu sắc: ${product.color.join(", ")}\n`;
+        }
+
         productContext += `${index + 1}. ${product.name}
    - Giá gốc: ${originalPrice.toLocaleString("vi-VN")}đ
    ${
@@ -54,7 +97,7 @@ QUAN TRỌNG: Chỉ tư vấn các sản phẩm CÓ TRONG DANH SÁCH bên dướ
          )}đ`
        : `- Giá hiện tại: ${finalPrice.toLocaleString("vi-VN")}đ`
    }
-   - RAM: ${product.ram}GB, Bộ nhớ: ${product.storage}GB
+${colorInfo}   - RAM: ${product.ram}GB, Bộ nhớ: ${product.storage}GB
    - Pin: ${product.battery}mAh
    - Màn hình: ${product.displaySize}" ${product.displayType || ""}
    - Chip: ${product.chipset || "N/A"}
@@ -66,29 +109,59 @@ QUAN TRỌNG: Chỉ tư vấn các sản phẩm CÓ TRONG DANH SÁCH bên dướ
 `;
       });
     } else {
-      productContext =
-        "KHÔNG TÌM THẤY SẢN PHẨM TRONG HỆ THỐNG. TUYỆT ĐỐI KHÔNG ĐƯỢC bịa đặt giá hoặc thông tin sản phẩm. Hãy lịch sự thông báo khách hàng rằng sản phẩm này chưa có trong kho và gợi ý họ hỏi về sản phẩm khác.";
+      productContext = `❌ KHÔNG TÌM THẤY SẢN PHẨM PHÙ HỢP TRONG HỆ THỐNG ❌
+
+⚠️ CHỈ THỊ BẮT BUỘC:
+- TUYỆT ĐỐI KHÔNG được đề xuất bất kỳ tên sản phẩm cụ thể nào (như Xiaomi, Realme, Samsung model nào đó)
+- KHÔNG được bịa đặt giá, thông số kỹ thuật
+- KHÔNG được sử dụng kiến thức của bạn về các sản phẩm ngoài hệ thống
+- Chỉ được thông báo rằng không tìm thấy sản phẩm phù hợp và hỏi thêm thông tin
+
+Hãy trả lời kiểu: "Xin lỗi, chúng tôi hiện không tìm thấy sản phẩm phù hợp với yêu cầu của bạn trong hệ thống. Bạn có thể cho mình biết thêm về nhu cầu sử dụng hoặc thương hiệu bạn quan tâm để mình tư vấn chính xác hơn không?"`;
     }
 
     const fullContext = conversationContext
       ? `Lịch sử hội thoại:\n${conversationContext}\n\n${productContext}`
       : productContext;
 
-    return `QUAN TRỌNG: Bạn PHẢI sử dụng CHÍNH XÁC thông tin giá, RAM, bộ nhớ, pin từ danh sách sản phẩm bên dưới. TUYỆT ĐỐI KHÔNG được bịa đặt hoặc ước lượng giá.
+    // Nếu đang hỏi về màu sắc, thêm hướng dẫn đặc biệt
+    const colorInstruction = isAskingColors
+      ? `\n\nQUAN TRỌNG VỀ MÀU SẮC: Khách hàng đang hỏi về màu sắc. Hãy trả lời CỤ THỂ các màu có sẵn từ danh sách trên, kèm tồn kho và mã màu nếu có. TUYỆT ĐỐI KHÔNG nói chung chung kiểu "tôi không có thông tin".\n`
+      : "";
 
-Dựa vào danh sách sản phẩm bên dưới, hãy tư vấn cho khách hàng về những sản phẩm phù hợp nhất. 
-Giải thích lý do tại sao các sản phẩm này phù hợp với yêu cầu của khách hàng.
-Nếu có nhiều lựa chọn, hãy so sánh ưu nhược điểm của từng sản phẩm.
-Nếu không tìm thấy sản phẩm, hãy hỏi thêm để hiểu rõ nhu cầu khách hàng.
+    // Instruction về việc đưa ra sản phẩm thay vì hỏi thêm
+    const productListInstruction =
+      products.length > 0
+        ? `\n\n🎯 QUAN TRỌNG - ĐƯA RA SẢN PHẨM NGAY:
+- Đã có ${products.length} sản phẩm phù hợp trong danh sách
+- ĐỪNG HỎI THÊM THÔNG TIN nữa (đã đủ để tư vấn)
+- HÃY TƯ VẤN CỤ THỂ các sản phẩm này ngay, giải thích tại sao phù hợp
+- So sánh ưu nhược điểm nếu có nhiều lựa chọn
+- Gợi ý sản phẩm TỐT NHẤT cho nhu cầu của khách\n`
+        : "";
 
+    return `🚨 CHỈ THỊ BẮT BUỘC - ĐỌC KỸ TRƯỚC KHI TRẢ LỜI:
+
+1. CHỈ được đề cập đến các sản phẩm CÓ TRONG DANH SÁCH bên dưới
+2. KHÔNG được sử dụng tên sản phẩm NGOÀI danh sách
+3. KHÔNG được bịa đặt giá hoặc thông số kỹ thuật
+4. Nếu danh sách trống → CHỈ được nói "không tìm thấy" và hỏi thêm thông tin
+${productListInstruction}${colorInstruction}
 KHI TRẢ LỜI VỀ GIÁ: 
-- Phải dùng CHÍNH XÁC số tiền trong danh sách, không làm tròn, không ước lượng.
-- Nếu có giảm giá, LUÔN nói giá SAU GIẢM (GIÁ SAU GIẢM) là giá khách phải trả.
-- Có thể đề cập giá gốc và % giảm để khách thấy ưu đãi.
+- Phải dùng CHÍNH XÁC số tiền trong danh sách, không làm tròn, không ước lượng
+- Nếu có giảm giá, LUÔN nói giá SAU GIẢM (GIÁ SAU GIẢM) là giá khách phải trả
+- Có thể đề cập giá gốc và % giảm để khách thấy ưu đãi
+
+═══════════════════════════════════════════
+DANH SÁCH SẢN PHẨM CÓ SẴN TRONG HỆ THỐNG:
+═══════════════════════════════════════════
 
 ${productContext}
 
-Câu hỏi của khách hàng: ${message}`;
+═══════════════════════════════════════════
+Câu hỏi của khách hàng: ${message}
+
+⚠️ NHỚ: Chỉ tư vấn sản phẩm TRONG danh sách ở trên. Không được đề xuất sản phẩm khác!`;
   }
 
   /**

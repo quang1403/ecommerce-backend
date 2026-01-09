@@ -6,15 +6,24 @@ const Product = require("../models/Product");
 // Thống kê doanh thu theo khoảng thời gian tùy chỉnh
 exports.getRevenueAnalytics = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy = "day" } = req.query; // day, week, month, year
+    const { startDate, endDate, groupBy = "day" } = req.query; // day, week, month, quarter, year
 
-    const matchCondition = { status: 3 }; // Chỉ tính đơn đã giao
-    if (startDate && endDate) {
-      matchCondition.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
-    }
+    // Xác định khoảng thời gian mặc định nếu không có
+    const start = startDate
+      ? new Date(startDate)
+      : new Date(new Date().setMonth(new Date().getMonth() - 1));
+    const end = endDate ? new Date(endDate) : new Date();
+
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    const matchCondition = {
+      status: 3, // Chỉ tính đơn đã giao
+      createdAt: {
+        $gte: start,
+        $lte: end,
+      },
+    };
 
     let groupId;
     switch (groupBy) {
@@ -49,7 +58,8 @@ exports.getRevenueAnalytics = async (req, res) => {
         };
     }
 
-    const revenueAnalytics = await Order.aggregate([
+    // Lấy dữ liệu thực tế từ database
+    const revenueData = await Order.aggregate([
       { $match: matchCondition },
       {
         $group: {
@@ -59,10 +69,147 @@ exports.getRevenueAnalytics = async (req, res) => {
           avgOrderValue: { $avg: "$total" },
         },
       },
-      { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
+      {
+        $sort: {
+          "_id.year": 1,
+          "_id.month": 1,
+          "_id.day": 1,
+          "_id.week": 1,
+          "_id.quarter": 1,
+        },
+      },
     ]);
 
-    res.json({ revenueAnalytics, groupBy, period: { startDate, endDate } });
+    // Tạo mảng đầy đủ dữ liệu theo groupBy
+    let revenueAnalytics = [];
+
+    switch (groupBy) {
+      case "day": {
+        const currentDate = new Date(start);
+        while (currentDate <= end) {
+          const year = currentDate.getFullYear();
+          const month = currentDate.getMonth() + 1;
+          const day = currentDate.getDate();
+
+          const dayData = revenueData.find(
+            (item) =>
+              item._id.year === year &&
+              item._id.month === month &&
+              item._id.day === day
+          );
+
+          revenueAnalytics.push({
+            _id: { year, month, day },
+            totalRevenue: dayData?.totalRevenue || 0,
+            orderCount: dayData?.orderCount || 0,
+            avgOrderValue: dayData?.avgOrderValue || 0,
+          });
+
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+        break;
+      }
+
+      case "week": {
+        const currentDate = new Date(start);
+        const weeks = new Set();
+
+        while (currentDate <= end) {
+          const year = currentDate.getFullYear();
+          const startOfYear = new Date(year, 0, 1);
+          const days = Math.floor(
+            (currentDate - startOfYear) / (24 * 60 * 60 * 1000)
+          );
+          const week = Math.ceil((days + startOfYear.getDay() + 1) / 7);
+
+          const weekKey = `${year}-${week}`;
+          if (!weeks.has(weekKey)) {
+            weeks.add(weekKey);
+
+            const weekData = revenueData.find(
+              (item) => item._id.year === year && item._id.week === week
+            );
+
+            revenueAnalytics.push({
+              _id: { year, week },
+              totalRevenue: weekData?.totalRevenue || 0,
+              orderCount: weekData?.orderCount || 0,
+              avgOrderValue: weekData?.avgOrderValue || 0,
+            });
+          }
+
+          currentDate.setDate(currentDate.getDate() + 7);
+        }
+        break;
+      }
+
+      case "month": {
+        const currentDate = new Date(start);
+        while (currentDate <= end) {
+          const year = currentDate.getFullYear();
+          const month = currentDate.getMonth() + 1;
+
+          const monthData = revenueData.find(
+            (item) => item._id.year === year && item._id.month === month
+          );
+
+          revenueAnalytics.push({
+            _id: { year, month },
+            totalRevenue: monthData?.totalRevenue || 0,
+            orderCount: monthData?.orderCount || 0,
+            avgOrderValue: monthData?.avgOrderValue || 0,
+          });
+
+          currentDate.setMonth(currentDate.getMonth() + 1);
+        }
+        break;
+      }
+
+      case "quarter": {
+        const currentDate = new Date(start);
+        while (currentDate <= end) {
+          const year = currentDate.getFullYear();
+          const quarter = Math.ceil((currentDate.getMonth() + 1) / 3);
+
+          const quarterData = revenueData.find(
+            (item) => item._id.year === year && item._id.quarter === quarter
+          );
+
+          revenueAnalytics.push({
+            _id: { year, quarter },
+            totalRevenue: quarterData?.totalRevenue || 0,
+            orderCount: quarterData?.orderCount || 0,
+            avgOrderValue: quarterData?.avgOrderValue || 0,
+          });
+
+          currentDate.setMonth(currentDate.getMonth() + 3);
+        }
+        break;
+      }
+
+      case "year": {
+        const startYear = start.getFullYear();
+        const endYear = end.getFullYear();
+
+        for (let year = startYear; year <= endYear; year++) {
+          const yearData = revenueData.find((item) => item._id.year === year);
+
+          revenueAnalytics.push({
+            _id: { year },
+            totalRevenue: yearData?.totalRevenue || 0,
+            orderCount: yearData?.orderCount || 0,
+            avgOrderValue: yearData?.avgOrderValue || 0,
+          });
+        }
+        break;
+      }
+    }
+
+    res.json({
+      revenueAnalytics,
+      groupBy,
+      period: { startDate: start, endDate: end },
+    });
   } catch (err) {
     console.error("Lỗi phân tích doanh thu:", err);
     res.status(500).json({ error: "Lỗi phân tích doanh thu", details: err });
@@ -229,9 +376,11 @@ exports.getTrendAnalytics = async (req, res) => {
     const { months = 6 } = req.query;
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - parseInt(months));
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
 
-    // Xu hướng doanh thu theo tháng
-    const revenueTrend = await Order.aggregate([
+    // Xu hướng doanh thu theo tháng - Lấy dữ liệu thực tế
+    const revenueData = await Order.aggregate([
       {
         $match: {
           status: 3,
@@ -252,8 +401,30 @@ exports.getTrendAnalytics = async (req, res) => {
       { $sort: { "_id.year": 1, "_id.month": 1 } },
     ]);
 
-    // Xu hướng đăng ký user mới
-    const userTrend = await User.aggregate([
+    // Tạo mảng đầy đủ cho xu hướng doanh thu
+    const revenueTrend = [];
+    const currentDate = new Date();
+
+    for (let i = parseInt(months) - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setMonth(currentDate.getMonth() - i);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+
+      const monthData = revenueData.find(
+        (item) => item._id.year === year && item._id.month === month
+      );
+
+      revenueTrend.push({
+        _id: { year, month },
+        totalRevenue: monthData?.totalRevenue || 0,
+        orderCount: monthData?.orderCount || 0,
+        avgOrderValue: monthData?.avgOrderValue || 0,
+      });
+    }
+
+    // Xu hướng đăng ký user mới - Lấy dữ liệu thực tế
+    const userData = await User.aggregate([
       {
         $match: {
           isAdmin: { $ne: true },
@@ -272,8 +443,27 @@ exports.getTrendAnalytics = async (req, res) => {
       { $sort: { "_id.year": 1, "_id.month": 1 } },
     ]);
 
-    // Tỷ lệ hoàn thành đơn hàng
-    const orderStatusTrend = await Order.aggregate([
+    // Tạo mảng đầy đủ cho xu hướng user
+    const userTrend = [];
+
+    for (let i = parseInt(months) - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setMonth(currentDate.getMonth() - i);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+
+      const monthData = userData.find(
+        (item) => item._id.year === year && item._id.month === month
+      );
+
+      userTrend.push({
+        _id: { year, month },
+        newUsers: monthData?.newUsers || 0,
+      });
+    }
+
+    // Tỷ lệ hoàn thành đơn hàng - Lấy dữ liệu thực tế
+    const orderStatusData = await Order.aggregate([
       {
         $match: {
           createdAt: { $gte: startDate },
@@ -291,6 +481,32 @@ exports.getTrendAnalytics = async (req, res) => {
       },
       { $sort: { "_id.year": 1, "_id.month": 1 } },
     ]);
+
+    // Tạo mảng đầy đủ cho xu hướng trạng thái đơn hàng
+    const orderStatusTrend = [];
+    const statuses = [0, 1, 2, 3, 4]; // Tất cả các trạng thái
+
+    for (let i = parseInt(months) - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setMonth(currentDate.getMonth() - i);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+
+      // Thêm dữ liệu cho từng trạng thái trong tháng
+      statuses.forEach((status) => {
+        const statusData = orderStatusData.find(
+          (item) =>
+            item._id.year === year &&
+            item._id.month === month &&
+            item._id.status === status
+        );
+
+        orderStatusTrend.push({
+          _id: { year, month, status },
+          count: statusData?.count || 0,
+        });
+      });
+    }
 
     res.json({
       revenueTrend,

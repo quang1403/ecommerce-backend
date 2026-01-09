@@ -80,9 +80,9 @@ class IntentService {
       ],
     };
 
-    // Patterns nhận diện sản phẩm mới
+    // Patterns nhận diện sản phẩm mới - Mở rộng cho tai nghe và tablet
     this.productMentionPattern =
-      /\b(iphone|ipad|samsung galaxy|galaxy|xiaomi|redmi|oppo|vivo|realme|nokia|airpod|tai nghe|headphone|earphone)\s*[\w\s]*\d*/i;
+      /\b(iphone|ipad|samsung galaxy|galaxy|xiaomi|redmi|oppo|vivo|realme|nokia|airpod|ap|a\.p\.|tai nghe|headphone|earphone|earbud|máy tính bảng|tablet)\s*[\w\s]*\d*/i;
   }
 
   /**

@@ -41,8 +41,11 @@ exports.getRevenueByMonth = async (req, res) => {
   try {
     const twelveMonthsAgo = new Date();
     twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+    twelveMonthsAgo.setDate(1); // Bắt đầu từ ngày 1 của tháng
+    twelveMonthsAgo.setHours(0, 0, 0, 0);
 
-    const revenueByMonth = await Order.aggregate([
+    // Lấy dữ liệu thực tế từ database
+    const revenueData = await Order.aggregate([
       {
         $match: {
           status: 3, // Chỉ tính đơn hàng đã giao thành công
@@ -61,6 +64,28 @@ exports.getRevenueByMonth = async (req, res) => {
       },
       { $sort: { "_id.year": 1, "_id.month": 1 } },
     ]);
+
+    // Tạo mảng đầy đủ 12 tháng
+    const revenueByMonth = [];
+    const currentDate = new Date();
+
+    for (let i = 11; i >= 0; i--) {
+      const date = new Date();
+      date.setMonth(currentDate.getMonth() - i);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+
+      // Tìm dữ liệu tương ứng với tháng này
+      const monthData = revenueData.find(
+        (item) => item._id.year === year && item._id.month === month
+      );
+
+      revenueByMonth.push({
+        _id: { year, month },
+        totalRevenue: monthData?.totalRevenue || 0,
+        orderCount: monthData?.orderCount || 0,
+      });
+    }
 
     res.json({ revenueByMonth });
   } catch (err) {
@@ -133,13 +158,15 @@ exports.getNewUsers = async (req, res) => {
     const { days = 30 } = req.query;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(days));
+    startDate.setHours(0, 0, 0, 0);
 
     const newUsers = await User.find({
       createdAt: { $gte: startDate },
       isAdmin: { $ne: true }, // Chỉ lấy user thường, không bao gồm admin
     }).sort({ createdAt: -1 });
 
-    const usersByDay = await User.aggregate([
+    // Lấy dữ liệu thực tế
+    const userData = await User.aggregate([
       {
         $match: {
           createdAt: { $gte: startDate },
@@ -158,6 +185,34 @@ exports.getNewUsers = async (req, res) => {
       },
       { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
     ]);
+
+    // Tạo mảng đầy đủ cho tất cả các ngày trong khoảng thời gian
+    const usersByDay = [];
+    const currentDate = new Date();
+    currentDate.setHours(0, 0, 0, 0);
+
+    for (let i = parseInt(days) - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(currentDate.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      const day = date.getDate();
+
+      // Tìm dữ liệu tương ứng với ngày này
+      const dayData = userData.find(
+        (item) =>
+          item._id.year === year &&
+          item._id.month === month &&
+          item._id.day === day
+      );
+
+      usersByDay.push({
+        _id: { year, month, day },
+        count: dayData?.count || 0,
+      });
+    }
 
     res.json({ newUsers, usersByDay });
   } catch (err) {

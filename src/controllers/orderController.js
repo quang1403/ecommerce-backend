@@ -172,6 +172,8 @@ exports.createOrder = async (req, res) => {
         productId: item.productId,
         quantity: item.quantity,
         price,
+        memory: item.memory || "",
+        color: item.color || "",
         ram: item.ram || "",
         storage: item.storage || "",
         variant: item.variant || {},
@@ -243,19 +245,52 @@ exports.createOrder = async (req, res) => {
     // Gửi mail xác nhận đơn hàng cho khách
     try {
       const sendMail = require("../utils/sendMail");
+      const { orderConfirmationTemplate } = require("../utils/emailTemplates");
+
       let email = req.user.email;
+      let customerName = req.user.name || "Quý khách";
+
       if (!email) {
         const user = await require("../models/User").findById(customerId);
         email = user?.email;
+        customerName = user?.name || "Quý khách";
       }
+
       if (email) {
+        // Chuẩn bị dữ liệu cho template
+        const itemsWithDetails = await Promise.all(
+          populatedItems.map(async (item) => {
+            const product = await Product.findById(item.productId);
+            return {
+              name: product?.name || "Sản phẩm",
+              quantity: item.quantity,
+              price: item.price,
+              color: item.color || "",
+              memory: item.memory || "",
+              ram: item.ram || "",
+              storage: item.storage || "",
+            };
+          })
+        );
+
+        const emailHtml = orderConfirmationTemplate({
+          orderId: order._id,
+          customerName,
+          items: itemsWithDetails,
+          total,
+          address,
+          phone,
+          paymentMethod: paymentMethod || "cod",
+          orderDate: new Date(order.createdAt).toLocaleString("vi-VN"),
+        });
+
         await sendMail({
           to: email,
-          subject: "Xác nhận đơn hàng",
-          text: `Đơn hàng của bạn đã được tạo thành công. Mã đơn hàng: ${order._id}. Tổng tiền: ${total} VND.`,
-          html: `<h1>Đơn hàng của bạn đã được tạo thành công</h1><p>Mã đơn hàng: <b>${
+          subject: "✅ Xác nhận đơn hàng #" + order._id,
+          text: `Đơn hàng của bạn đã được tạo thành công. Mã đơn hàng: ${
             order._id
-          }</b></p><p>Tổng tiền: <b>${total.toLocaleString()} VND</b></p>`,
+          }. Tổng tiền: ${total.toLocaleString()} VND.`,
+          html: emailHtml,
         });
       }
     } catch (mailErr) {
@@ -345,23 +380,32 @@ exports.updateInstallmentStatus = async (req, res) => {
     // Gửi email thông báo cho khách hàng
     try {
       const sendMail = require("../utils/sendMail");
+      const {
+        installmentApprovedTemplate,
+        installmentRejectedTemplate,
+      } = require("../utils/emailTemplates");
+
       const email = order.customerId?.email;
+      const customerName = order.customerId?.name || "Quý khách";
+
       if (email) {
         let subject, text, html;
         if (financeStatus === "approved") {
-          subject = "Hồ sơ trả góp đã được duyệt";
+          subject = "✅ Hồ sơ trả góp đã được duyệt";
           text = `Chúc mừng! Hồ sơ trả góp của bạn đã được công ty tài chính phê duyệt. Mã đơn hàng: ${order._id}`;
-          html = `<h1>✅ Hồ sơ trả góp đã được duyệt</h1>
-                  <p>Chúc mừng! Hồ sơ trả góp của bạn đã được công ty tài chính phê duyệt.</p>
-                  <p>Mã đơn hàng: <b>${order._id}</b></p>
-                  <p>Chúng tôi sẽ tiến hành giao hàng trong thời gian sớm nhất.</p>`;
+          html = installmentApprovedTemplate({
+            customerName,
+            orderId: order._id,
+            monthlyPayment: order.installment?.monthlyPayment || 0,
+            months: order.installment?.months || 12,
+          });
         } else if (financeStatus === "rejected") {
-          subject = "Hồ sơ trả góp bị từ chối";
+          subject = "❌ Hồ sơ trả góp chưa được duyệt";
           text = `Rất tiếc, hồ sơ trả góp của bạn chưa được công ty tài chính phê duyệt. Mã đơn hàng: ${order._id}`;
-          html = `<h1>❌ Hồ sơ trả góp chưa được duyệt</h1>
-                  <p>Rất tiếc, hồ sơ trả góp của bạn chưa được công ty tài chính phê duyệt.</p>
-                  <p>Mã đơn hàng: <b>${order._id}</b></p>
-                  <p>Vui lòng liên hệ với chúng tôi để được hỗ trợ hoặc chọn hình thức thanh toán khác.</p>`;
+          html = installmentRejectedTemplate({
+            customerName,
+            orderId: order._id,
+          });
         }
         if (subject) {
           await sendMail({ to: email, subject, text, html });

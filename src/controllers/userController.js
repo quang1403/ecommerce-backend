@@ -177,24 +177,16 @@ exports.register = async (req, res) => {
 
     // thử gửi mail, nhưng không để fail ảnh hưởng response
     try {
+      const { welcomeTemplate } = require("../utils/emailTemplates");
+      const emailHtml = welcomeTemplate({
+        customerName: user.fullName || user.name || "Quý khách",
+      });
+
       await sendMail({
         to: user.email,
         subject: "🎉 Chào mừng bạn đến với Phone Store",
         text: `Xin chào ${user.fullName}, cảm ơn bạn đã đăng ký!`,
-        html: `
-          <div style="font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4;">
-            <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-              <h2 style="color: #4CAF50;">Xin chào ${user.fullName} 👋</h2>
-              <p>Cảm ơn bạn đã đăng ký tài khoản tại <b>Phone Store</b>.</p>
-              <p>Hãy bắt đầu trải nghiệm mua sắm ngay hôm nay 🚀</p>
-              <a href="http://localhost:3000" style="display: inline-block; margin-top: 15px; padding: 10px 20px; background: #4CAF50; color: #fff; text-decoration: none; border-radius: 5px;">
-                Truy cập Phone Store
-              </a>
-              <hr style="margin: 30px 0;"/>
-              <p style="font-size: 12px; color: #888;">Đây là email tự động, vui lòng không trả lời.</p>
-            </div>
-          </div>
-        `,
+        html: emailHtml,
       });
     } catch (mailError) {
       console.error("Lỗi gửi email:", mailError.message);
@@ -382,4 +374,41 @@ exports.resetPassword = async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
+};
+
+// Google OAuth Success Callback
+exports.googleAuthSuccess = async (req, res) => {
+  try {
+    const user = req.user;
+
+    // Tạo JWT token
+    const token = jwt.sign(
+      { id: user._id, isAdmin: user.isAdmin },
+      "secret_key",
+      { expiresIn: "1d" }
+    );
+
+    // Redirect về frontend với token
+    // Bạn có thể thay đổi URL frontend tùy theo cấu hình
+    res.redirect(
+      `http://localhost:3000/auth/google/success?token=${token}&user=${encodeURIComponent(
+        JSON.stringify({
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          avatar: user.avatar,
+          isAdmin: user.isAdmin,
+        })
+      )}`
+    );
+  } catch (error) {
+    res.redirect(
+      `http://localhost:3000/auth/google/error?message=${error.message}`
+    );
+  }
+};
+
+// Google OAuth Failure Callback
+exports.googleAuthFailure = (req, res) => {
+  res.redirect("http://localhost:3000/login?error=google_auth_failed");
 };

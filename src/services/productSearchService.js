@@ -177,18 +177,18 @@ class ProductSearchService {
     }
 
     // Bước 3: Nếu không tìm thấy theo tên, dùng bộ lọc như cũ
-    console.log("🔄 Fallback to findProducts với filters:", filters);
+    console.log("Fallback to findProducts với filters:", filters);
     products = await this.findProducts(filters);
 
     if (products.length === 0) {
-      console.log("❌ Không tìm thấy sản phẩm nào với tất cả các bước");
+      console.log("Không tìm thấy sản phẩm nào với tất cả các bước");
       // Bước 4: Last resort - tìm sản phẩm tương tự theo brand
       const brandMatch = query.match(
         /(iphone|ipad|samsung|xiaomi|oppo|vivo|realme|nokia|airpod|tai nghe|headphone)/i
       );
       if (brandMatch) {
         const brand = brandMatch[1];
-        console.log(`🔍 Last resort: Tìm sản phẩm ${brand} bất kỳ`);
+        console.log(`Last resort: Tìm sản phẩm ${brand} bất kỳ`);
         products = await Product.find({
           name: { $regex: new RegExp(brand, "i") },
           stock: { $gt: 0 },

@@ -2,8 +2,27 @@
 
 const express = require("express");
 const router = express.Router();
+const passport = require("passport");
 const { auth, isAdmin } = require("../middleware/auth");
 const userController = require("../controllers/userController");
+
+// Google OAuth Routes
+router.get(
+  "/auth/google",
+  passport.authenticate("google", { scope: ["profile", "email"] })
+);
+
+router.get(
+  "/auth/google/callback",
+  passport.authenticate("google", {
+    failureRedirect: "/api/users/auth/google/failure",
+    session: false,
+  }),
+  userController.googleAuthSuccess
+);
+
+router.get("/auth/google/failure", userController.googleAuthFailure);
+
 // Địa chỉ nhiều địa chỉ cho user
 router.post("/address", auth, userController.addAddress); // Thêm địa chỉ mới
 router.get("/address", auth, userController.getAddresses); // Lấy danh sách địa chỉ

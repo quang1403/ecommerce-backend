@@ -1,15 +1,6 @@
 /**
  * productSearchService.js
  * Rewritten & hardened product search service
- *
- * Features:
- * - normalize query (Vietnamese & punctuation stripping)
- * - robust extractProductInfo (brand, model, variant, storage)
- * - multi-strategy search: exactModel -> brand -> feature -> fuzzy -> fallback
- * - safe regex usage (no 'g' for capture groups)
- * - populate brand with match and filter nulls
- * - scoring with storage/variant/brand/rating/sold/stock
- * - debug toggle
  */
 
 const Product = require("../../models/Product");
@@ -29,8 +20,9 @@ class ProductSearchService {
         /ip\s*(x[sr]?(?:\s*max)?(?:\s*pro)?)/i,
       ],
       samsung: [
-        /samsung\s*(?:galaxy\s*)?([a-z]?\d{1,3}(?:\s*ultra|\s*plus|\s*note|\s*fe)?)/i,
-        /galaxy\s*([a-z]?\d{1,3}(?:\s*ultra|\s*plus|\s*note|\s*fe)?)/i,
+        /samsung\s*(?:galaxy\s*)?([a-z]?\d{1,3}(?:\s*(?:ultra|plus|note|fe|5g|4g))*)/i,
+        /galaxy\s*([a-z]?\d{1,3}(?:\s*(?:ultra|plus|note|fe|5g|4g))*)/i,
+        /galaxy\s*z\s*(fold|flip)\s*(\d{1,2})?/i, // Galaxy Z Fold/Flip series
         /\b(samsung|sam)\b.*?([sS]\d{1,3}|note\s*\d{1,3}|j\d{1,3})/i,
       ],
       xiaomi: [
@@ -48,7 +40,14 @@ class ProductSearchService {
       ],
       realme: [/realme\s*(\w*\s*\d{1,4}(?:\s*(pro|neo|max))?)/i],
       ipad: [/ipad(?:\s*(pro|air|mini))?(?:\s*(\d+(?:\.\d+)?))?/i],
-      headphone: [/(?:tai\s*nghe|headphone|earphone|airpods|earbud)/i],
+      headphone: [
+        /(?:tai\s*nghe|headphone|earphone|earbud)(?:\s*(?:bluetooth|không\s*dây|khong\s*day|wireless))?/i,
+        /\b(?:airpods?|ap|a\.p\.?)\s*(\d+|pro|max|ultra)?/i,
+        /(?:sony|jbl|bose|beats|samsung\s*buds?)(?:\s*\w+)?/i,
+        /(?:galaxy\s*buds?)(?:\s*\d+)?(?:\s*(?:pro|plus|live|fe))?/i,
+        /(?:jabra|anker|soundpeats|edifier)(?:\s*\w+)?/i,
+      ],
+      airpods: [/\b(?:airpods?|ap|a\.p\.?)\s*(\d+|pro|max|ultra)?/i],
     };
 
     // brand mapping & aliases
@@ -56,9 +55,13 @@ class ProductSearchService {
       iphone: "Apple",
       ipad: "Apple",
       apple: "Apple",
+      ap: "Apple",
+      airpods: "Apple",
       samsung: "Samsung",
       galaxy: "Samsung",
       sam: "Samsung",
+      buds: "Samsung",
+      "galaxy buds": "Samsung",
       xiaomi: "Xiaomi",
       redmi: "Xiaomi",
       poco: "Xiaomi",
@@ -67,7 +70,57 @@ class ProductSearchService {
       find: "Oppo",
       vivo: "Vivo",
       realme: "Realme",
-      airpods: "Apple",
+      sony: "Sony",
+      jbl: "JBL",
+      bose: "Bose",
+      beats: "Beats",
+      jabra: "Jabra",
+      anker: "Anker",
+      soundpeats: "SoundPeats",
+      edifier: "Edifier",
+    };
+
+    this.synonyms = {
+      // Máy tính bảng
+      "máy tính bảng": "ipad tablet",
+      "may tinh bang": "ipad tablet",
+      tablet: "ipad",
+
+      // Nhu cầu sử dụng -> Features
+      "máy chơi game": "gaming phone smartphone điện thoại hiệu năng cao",
+      "may choi game": "gaming phone smartphone điện thoại hiệu năng cao",
+      "chơi game": "gaming hiệu năng cao performance",
+      "choi game": "gaming hiệu năng cao performance",
+      gaming: "hiệu năng cao performance chipset mạnh",
+      "máy chụp ảnh": "camera phone smartphone điện thoại camera tốt",
+      "may chup anh": "camera phone smartphone điện thoại camera tốt",
+      "chụp ảnh đẹp": "camera tốt camera chất lượng cao",
+      "chup anh dep": "camera tốt camera chất lượng cao",
+      "pin trâu": "pin lớn battery life dung lượng pin cao",
+      "pin khỏe": "pin lớn battery life dung lượng pin cao",
+
+      // Tai nghe - Phong phú hơn
+      "tai nghe": "headphone earphone earbud airpods",
+      "tai nghe không dây": "wireless headphone bluetooth earphone airpods",
+      "tai nghe khong day": "wireless headphone bluetooth earphone airpods",
+      "tai nghe bluetooth": "bluetooth headphone wireless earphone airpods",
+      "tai nghe true wireless": "tws earbuds airpods",
+      "tai nghe chụp tai": "over ear headphone",
+      "tai nghe nhét tai": "in ear earphone earbud",
+      "tai nghe thể thao": "sport earphone workout headphone",
+      "tai nghe gaming": "gaming headset headphone",
+      "tai nghe có dây": "wired headphone earphone",
+      earbuds: "earphone airpods wireless",
+      tws: "true wireless earbuds airpods",
+      headset: "headphone gaming",
+
+      // Điện thoại
+      "điện thoại": "phone smartphone",
+      "dien thoai": "phone smartphone",
+      "smart phone": "phone",
+      "di động": "phone",
+      "di dong": "phone",
+      máy: "phone smartphone điện thoại", // "máy" trong context cửa hàng phone
     };
 
     // alias variants mapping for normalization
@@ -87,11 +140,49 @@ class ProductSearchService {
 
     // feature keywords
     this.featureKeywords = {
-      price: ["rẻ", "giá thấp", "tiết kiệm", "bình dân", "budget"],
+      price: [
+        "rẻ",
+        "giá thấp",
+        "tiết kiệm",
+        "bình dân",
+        "budget",
+        "tầm giá",
+        "khoảng",
+      ],
       premium: ["cao cấp", "premium", "flagship", "đắt", "pro", "max", "ultra"],
-      gaming: ["gaming", "game", "chơi game", "hiệu năng cao", "mượt"],
-      camera: ["camera", "chụp ảnh", "selfie", "quay video", "zoom"],
-      battery: ["pin", "battery", "sạc", "dung lượng pin", "pin trâu"],
+      gaming: [
+        "gaming",
+        "game",
+        "chơi game",
+        "choi game",
+        "máy chơi game",
+        "may choi game",
+        "hiệu năng cao",
+        "mượt",
+        "performance",
+        "chipset mạnh",
+        "ram cao",
+      ],
+      camera: [
+        "camera",
+        "chụp ảnh",
+        "chup anh",
+        "máy chụp ảnh",
+        "may chup anh",
+        "selfie",
+        "quay video",
+        "zoom",
+        "camera đẹp",
+        "camera tốt",
+      ],
+      battery: [
+        "pin",
+        "battery",
+        "sạc",
+        "dung lượng pin",
+        "pin trâu",
+        "pin khỏe",
+      ],
       storage: ["bộ nhớ", "storage", "gb", "tb", "dung lượng"],
       ram: ["ram", "memory"],
     };
@@ -127,6 +218,18 @@ class ProductSearchService {
           res.products.length > 0
         ) {
           this.log(`Strategy ${res.strategy} found ${res.products.length}`);
+
+          // 🎯 Log top 3 results để debug
+          console.log(`\n🔍 Top results for "${rawQuery}":`);
+          res.products.slice(0, 3).forEach((p, idx) => {
+            console.log(
+              `${idx + 1}. ${p.name} (score: ${p.score || "N/A"}, stock: ${
+                p.stock
+              })`
+            );
+          });
+          console.log("");
+
           return this.formatSearchResults(res, rawQuery);
         }
       }
@@ -155,6 +258,17 @@ class ProductSearchService {
   normalizeQuery(q) {
     if (!q || typeof q !== "string") return "";
     let s = q.toLowerCase();
+
+    // 🎯 Apply synonyms TRƯỚC khi normalize
+    for (const [synonym, replacement] of Object.entries(this.synonyms)) {
+      const regex = new RegExp(synonym, "gi");
+      if (regex.test(s)) {
+        s = s.replace(regex, replacement);
+        console.log(
+          `🔄 Synonym replaced: "${synonym}" → "${replacement}" | Query: "${s}"`
+        );
+      }
+    }
 
     // Remove Vietnamese diacritics
     s = s
@@ -341,35 +455,84 @@ class ProductSearchService {
   async fuzzySearch(query) {
     try {
       const info = this.extractProductInfo(query);
-      // build keywords prioritized: model tokens then remaining words
-      const tokens = query.split(" ").filter((t) => t.length > 1);
-      const modelToken = info.model
-        ? info.model.split(" ").filter(Boolean)
-        : [];
-      const other = tokens.filter((t) => !modelToken.includes(t)).slice(0, 6);
 
-      const patternParts = [];
-      if (modelToken.length) patternParts.push(modelToken.join(".*"));
-      if (other.length) patternParts.push(other.join(".*"));
+      // Build better search criteria focusing on brand/model
+      const searchCriteria = [];
 
-      const pattern = patternParts.length
-        ? new RegExp(patternParts.join(".*"), "i")
-        : new RegExp(query, "i");
+      // If we have brand, prioritize it
+      if (info.brand) {
+        const brandPattern = new RegExp(info.brand, "i");
+        searchCriteria.push({ name: brandPattern });
+      }
+
+      // If we have model, use it
+      if (info.model) {
+        const modelPattern = new RegExp(
+          info.model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+          "i"
+        );
+        searchCriteria.push({ name: modelPattern });
+      }
+
+      // If no brand/model extracted, use tokens but filter out common words
+      if (!info.brand && !info.model) {
+        const stopWords = [
+          "con",
+          "hang",
+          "khong",
+          "co",
+          "gi",
+          "nao",
+          "the",
+          "nay",
+          "kia",
+          "duoc",
+          "cho",
+          "toi",
+          "mua",
+          "ban",
+          "gia",
+          "bao",
+          "nhieu",
+        ];
+        const tokens = query
+          .split(" ")
+          .filter((t) => t.length > 1 && !stopWords.includes(t));
+
+        if (tokens.length > 0) {
+          // Only use first 3 most meaningful tokens
+          const meaningfulTokens = tokens.slice(0, 3);
+          const pattern = new RegExp(meaningfulTokens.join(".*"), "i");
+          searchCriteria.push({ name: pattern });
+        }
+      }
+
+      if (searchCriteria.length === 0) {
+        return { success: false, products: [] };
+      }
 
       const products = await Product.find({
-        $or: [{ name: pattern }, { description: pattern }],
+        $or: searchCriteria,
       })
         .populate("brand")
         .sort({ rating: -1, sold: -1 })
-        .limit(50);
+        .limit(30);
 
       if (!products || products.length === 0)
         return { success: false, products: [] };
 
       const scored = this.scoreProducts(products, query, info);
+
+      // Filter out products with very low scores (< 0.2)
+      const filtered = scored.filter((p) => p.searchScore >= 0.2);
+
+      if (filtered.length === 0) {
+        return { success: false, products: [] };
+      }
+
       return {
         success: true,
-        products: scored.slice(0, 10),
+        products: filtered.slice(0, 10),
         strategy: "fuzzy_search",
         extractedInfo: info,
       };
@@ -433,12 +596,45 @@ class ProductSearchService {
       if (m && m[1]) info.model = m[1];
       return info;
     }
-    if (/\btai\s*nghe\b|\bairpods\b|\bearbud\b/i.test(q)) {
+
+    // Enhanced headphone detection with AP abbreviation and model extraction
+    if (
+      /\btai\s*nghe\b|\bairpods?\b|\bearbud\b|\b(?:ap|a\.p\.?)\s*\d/i.test(q)
+    ) {
       info.type = "accessory";
-      if (/\bairpods\b/i.test(q)) {
+
+      // Detect AirPods (full name or AP abbreviation)
+      if (/\b(?:airpods?|ap|a\.p\.?)\b/i.test(q)) {
         info.brand = "Apple";
-        info.model = "AirPods";
+
+        // Extract model number: "AirPods 3", "AP 4", "A.P. 2"
+        const modelMatch = q.match(
+          /\b(?:airpods?|ap|a\.p\.?)\s*(\d+|pro|max)?/i
+        );
+        if (modelMatch && modelMatch[1]) {
+          info.model = `AirPods ${modelMatch[1]}`;
+        } else {
+          info.model = "AirPods";
+        }
+      } else {
+        // Generic headphone - try to extract brand and model from remaining text
+        // Example: "tai nghe Sony WH-1000XM5"
+        const brandMatch = q.match(
+          /\b(sony|samsung|jbl|bose|beats|xiaomi|oppo|huawei)\b/i
+        );
+        if (brandMatch) {
+          info.brand =
+            brandMatch[1].charAt(0).toUpperCase() +
+            brandMatch[1].slice(1).toLowerCase();
+        }
+
+        // Extract model code/number
+        const modelMatch = q.match(/\b([a-z]{2,4}[-\s]*\d{1,4}[a-z\d]*)\b/i);
+        if (modelMatch) {
+          info.model = modelMatch[1].toUpperCase();
+        }
       }
+
       return info;
     }
 
@@ -450,6 +646,21 @@ class ProductSearchService {
         if (match) {
           // normalize brand
           info.brand = this.brandMapping[brandKey] || brandKey;
+
+          // Special handling for Galaxy Z Fold/Flip series
+          if (
+            brandKey === "samsung" &&
+            /galaxy\s*z\s*(fold|flip)/i.test(match[0])
+          ) {
+            const zType = match[1]; // "Fold" or "Flip"
+            const number = match[2] || ""; // Number like "6"
+            info.model = number ? `Z ${zType} ${number}` : `Z ${zType}`;
+            info.variant = null;
+
+            if (pattern && pattern.lastIndex) pattern.lastIndex = 0;
+            return info;
+          }
+
           // model extraction heuristics
           // model could be in group 1 or fallback to full match
           const candidateModel = match[1] ? match[1].trim() : match[0].trim();
@@ -535,12 +746,21 @@ class ProductSearchService {
         brandPattern = "(?:apple|iphone|ip)";
       }
 
-      const m = extractedInfo.model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Escape model but allow flexible spaces
+      const modelParts = extractedInfo.model.split(/\s+/);
+      const m = modelParts
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join("\\s*");
+
       ors.push({ name: new RegExp(`${brandPattern}.*${m}`, "i") });
       ors.push({ name: new RegExp(`${m}.*${brandPattern}`, "i") });
-      ors.push({ name: new RegExp(`\\b${m}\\b`, "i") });
+      ors.push({ name: new RegExp(`${m}`, "i") }); // Remove word boundary for flexibility
     } else if (extractedInfo.model) {
-      const m = extractedInfo.model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Split model by spaces and allow flexible matching
+      const modelParts = extractedInfo.model.split(/\s+/);
+      const m = modelParts
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join("\\s*");
       ors.push({ name: new RegExp(`${m}`, "i") });
     } else if (extractedInfo.brand) {
       let brandPattern = extractedInfo.brand.replace(
@@ -576,14 +796,104 @@ class ProductSearchService {
    * Score products based on multiple signals
    */
   scoreProducts(products, rawQuery, extractedInfo = {}) {
-    const q = rawQuery.toLowerCase();
+    const q = rawQuery.toLowerCase().trim();
     return products
       .map((product) => {
         let score = 0;
-        const name = (product.name || "").toLowerCase();
+        const name = (product.name || "").toLowerCase().trim();
 
-        // exact name contains full query
-        if (q.length > 2 && name.includes(q)) score += 150;
+        // 🎯 EXACT MATCH - Ưu tiên tuyệt đối
+        // VD: "iphone 15" khớp chính xác "iPhone 15" → +500 điểm
+        if (name === q) {
+          score += 500;
+        }
+
+        // 🎯 EXACT MATCH không dấu (normalize)
+        const normalizedName = name.replace(/\s+/g, "").replace(/[^\w]/g, "");
+        const normalizedQ = q.replace(/\s+/g, "").replace(/[^\w]/g, "");
+        if (normalizedName === normalizedQ) {
+          score += 450;
+        }
+
+        // 🎯 EXACT PRODUCT TYPE MATCH
+        // "ipad pro" trong query → "ipad pro" trong tên = +300, "iphone pro" = 0
+        const productTypes = [
+          "ipad",
+          "iphone",
+          "galaxy",
+          "xiaomi",
+          "redmi",
+          "airpods",
+          "tai nghe",
+          "headphone",
+          "earphone",
+          "earbud",
+        ];
+        for (const type of productTypes) {
+          if (q.includes(type) && name.includes(type)) {
+            score += 300;
+            console.log(
+              `✅ Exact product type match: "${type}" in "${name}" (+300)`
+            );
+            break;
+          } else if (q.includes(type) && !name.includes(type)) {
+            // Query có type này nhưng product không có → Penalty lớn
+            score -= 250;
+            console.log(
+              `❌ Type mismatch: query wants "${type}" but product is "${name}" (-250)`
+            );
+            break;
+          }
+        }
+
+        // 🎯 SHORTER NAME PRIORITY
+        // Nếu cả 2 đều chứa query, ưu tiên tên ngắn hơn
+        // VD: "iPhone 15" (10 ký tự) > "iPhone 15 màu trắng" (20 ký tự)
+        if (q.length > 2 && name.includes(q)) {
+          score += 150;
+          // Bonus cho tên ngắn: càng gần độ dài query càng cao
+          const lengthDiff = name.length - q.length;
+          if (lengthDiff === 0) {
+            score += 300; // Exact length match
+          } else if (lengthDiff < 5) {
+            score += 200; // Very close
+          } else if (lengthDiff < 10) {
+            score += 100; // Close
+          } else if (lengthDiff < 20) {
+            score += 50; // Moderately close
+          }
+          // Penalty cho tên quá dài (có thể là variant)
+          if (lengthDiff > 15) {
+            score -= 50;
+          }
+        } else {
+          // 🎯 FUZZY MATCH cho các token riêng lẻ
+          // VD: "tai nghe ap 3" match "Tai nghe AP 3 Pro" (có cả 4 tokens)
+          const queryTokens = q.split(/\s+/).filter((t) => t.length > 1);
+          const nameTokens = name.split(/\s+/).filter((t) => t.length > 1);
+          let matchedTokens = 0;
+
+          for (const qToken of queryTokens) {
+            for (const nToken of nameTokens) {
+              if (nToken.includes(qToken) || qToken.includes(nToken)) {
+                matchedTokens++;
+                break;
+              }
+            }
+          }
+
+          if (matchedTokens > 0 && queryTokens.length > 0) {
+            const matchRatio = matchedTokens / queryTokens.length;
+            score += Math.round(matchRatio * 150);
+            if (matchRatio >= 0.8) {
+              console.log(
+                `✅ Fuzzy match: ${matchedTokens}/${
+                  queryTokens.length
+                } tokens in "${name}" (+${Math.round(matchRatio * 150)})`
+              );
+            }
+          }
+        }
 
         // model match strongly
         if (
@@ -592,7 +902,131 @@ class ProductSearchService {
         )
           score += 120;
 
-        // variant
+        // variant - LOGIC MÀU SẮC THÔNG MINH
+        // Phân biệt 2 trường hợp:
+        // 1. "iPhone 15 có những màu nào" → Cần sản phẩm BASE (iPhone 15), không phải variant
+        // 2. "iPhone 15 màu đen" → Cần variant cụ thể
+        const colorKeywords = [
+          "đen",
+          "trắng",
+          "đỏ",
+          "xanh",
+          "vàng",
+          "hồng",
+          "tím",
+          "xám",
+          "bạc",
+          "gold",
+          "black",
+          "white",
+          "red",
+          "blue",
+          "green",
+          "purple",
+          "gray",
+          "silver",
+          "titan",
+          "titanium",
+        ];
+
+        const askingAboutColors =
+          /có (những )?màu (gì|nào|sắc)/i.test(q) ||
+          /màu sắc nào/i.test(q) ||
+          /bao nhiêu màu/i.test(q) ||
+          /mấy màu/i.test(q);
+
+        const nameHasColorInName = colorKeywords.some((keyword) =>
+          name.includes(keyword)
+        );
+        const queryHasSpecificColor = colorKeywords.some((keyword) =>
+          q.includes(keyword)
+        );
+
+        //  CASE 1: User hỏi "có những màu nào" → Ưu tiên sản phẩm BASE
+        if (askingAboutColors && nameHasColorInName) {
+          // Tên có màu cụ thể nhưng user đang hỏi CÓ MÀU GÌ → Penalty mạnh
+          score -= 200;
+          console.log(
+            `⚠️ Penalty: "${name}" có màu cụ thể khi user hỏi về danh sách màu (-200)`
+          );
+        }
+
+        //  CASE 2: User không hỏi về màu, nhưng tên có màu → Penalty
+        if (
+          !askingAboutColors &&
+          !queryHasSpecificColor &&
+          nameHasColorInName
+        ) {
+          score -= 150;
+          console.log(
+            `⚠️ Penalty: "${name}" có màu khi user không hỏi về màu (-150)`
+          );
+        }
+
+        //  CASE 3: User hỏi màu cụ thể → Bonus cho variant đúng màu
+        if (queryHasSpecificColor && nameHasColorInName) {
+          // Check if name contains the specific color user asked for
+          const matchingColor = colorKeywords.find(
+            (keyword) => q.includes(keyword) && name.includes(keyword)
+          );
+          if (matchingColor) {
+            score += 200;
+            console.log(
+              `✅ Bonus: "${name}" khớp màu "${matchingColor}" user yêu cầu (+200)`
+            );
+          }
+        }
+
+        //  CASE 4: Ưu tiên BASE MODEL khi user hỏi về màu
+        // VD: "iPhone 12 có màu nào" → Ưu tiên "iPhone 12" hơn "iPhone 12 Pro Max"
+        if (askingAboutColors) {
+          const variantKeywords = [
+            "pro max",
+            "pro",
+            "plus",
+            "ultra",
+            "mini",
+            "lite",
+            "se",
+          ];
+          const isVariantModel = variantKeywords.some((keyword) =>
+            name.includes(keyword)
+          );
+
+          // Extract base model từ query
+          // "iPhone 12 có màu nào" → base = "iphone 12"
+          const baseModelMatch = q.match(
+            /(iphone|ipad|samsung|galaxy|xiaomi|redmi|oppo|vivo|realme|nokia)\s*(\d+)/i
+          );
+
+          if (baseModelMatch && isVariantModel) {
+            const baseModel = baseModelMatch[0].toLowerCase();
+            // Check if name có chính xác base model + variant
+            // VD: "iphone 12 pro max" chứa "iphone 12" + "pro max"
+            if (name.includes(baseModel)) {
+              score -= 150;
+              console.log(
+                `⚠️ Penalty: "${name}" là variant model khi user hỏi base model màu (-150)`
+              );
+            }
+          } else if (baseModelMatch && !isVariantModel) {
+            // Đây là base model, bonus
+            const baseModel = baseModelMatch[0].toLowerCase();
+            // Check exact: "iphone 12" trong "iphone 12" (không có pro/max/plus)
+            const nameWords = name.split(/\s+/);
+            const hasExactBase = nameWords.some((word, idx) => {
+              if (idx === 0) return false; // skip brand
+              return word === baseModel.split(/\s+/)[1]; // so sánh số
+            });
+
+            if (hasExactBase && nameWords.length <= 3) {
+              // VD: "iphone 12" (2 words) hoặc "iphone 12 64gb" (3 words)
+              score += 150;
+              console.log(`✅ Bonus: "${name}" là base model chính xác (+150)`);
+            }
+          }
+        }
+
         if (
           extractedInfo.variant &&
           name.includes(extractedInfo.variant.toLowerCase())
@@ -642,9 +1076,28 @@ class ProductSearchService {
           if (name.includes(joined)) score += 30;
         }
 
+        //  Final score log for debugging
+        if (name.includes("iphone 15")) {
+          console.log(
+            `📊 Score for "${name}": ${score} (query: "${q.substring(0, 30)}")`
+          );
+        }
+
         return { ...product.toObject(), score };
       })
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => {
+        // Log top 3 products for debugging
+        if (a.score > 0 || b.score > 0) {
+          const aShort = (a.name || "").substring(0, 30);
+          const bShort = (b.name || "").substring(0, 30);
+          if (Math.abs(a.score - b.score) < 50) {
+            console.log(
+              `⚖️ Score comparison: "${aShort}" (${a.score}) vs "${bShort}" (${b.score})`
+            );
+          }
+        }
+        return b.score - a.score;
+      });
   }
 
   /**

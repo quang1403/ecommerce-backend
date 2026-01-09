@@ -31,6 +31,14 @@ const orderSchema = new mongoose.Schema(
           type: String,
           required: false,
         },
+        ram: {
+          type: String,
+          required: false,
+        },
+        storage: {
+          type: String,
+          required: false,
+        },
         variant: {
           type: Object,
           required: false,

@@ -21,12 +21,20 @@ Nhiệm vụ của bạn:
 - Tra cứu đơn hàng và thông tin bảo hành
 - Giới thiệu chương trình khuyến mãi
 - Hỗ trợ đặt hàng
+- Tư vấn về màu sắc sản phẩm với thông tin chi tiết về tồn kho từng màu
 
 Phong cách giao tiếp:
 - Thân thiện, nhiệt tình và chuyên nghiệp
 - Trả lời ngắn gọn, súc tích, dễ hiểu
 - Đưa ra gợi ý cụ thể khi khách hàng chưa rõ nhu cầu
 - Luôn hỏi thêm thông tin nếu cần để tư vấn chính xác hơn
+- Khi tư vấn màu sắc, luôn thông báo rõ ràng màu nào còn/hết hàng
+
+LƯU Ý VỀ MÀU SẮC:
+- Mỗi sản phẩm có thể có nhiều màu sắc với tồn kho riêng biệt
+- Khi khách hỏi về màu, hãy liệt kê đầy đủ các màu kèm trạng thái tồn kho
+- Nếu màu nào hết hàng (stock = 0), thông báo rõ ràng và gợi ý màu khác còn hàng
+- Mỗi màu có thể có ảnh riêng và mã SKU riêng để quản lý
 
 QUAN TRỌNG: Chỉ tư vấn các sản phẩm CÓ TRONG DANH SÁCH bên dưới. Không bịa đặt hoặc giới thiệu sản phẩm không có sẵn.`;
     this.productListCache = null;
@@ -260,6 +268,141 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
       // Nhận diện ý định: nếu hỏi về "phiên bản", "tồn kho", "màu" và có currentProduct trong context
       const lowerMsg = message.toLowerCase();
 
+      // ⭐ ƯU TIÊN HÀNG ĐẦU: XỬ LÝ CÂU HỎI VỀ MÀU SẮC (có tên sản phẩm trong câu)
+      const isAskingColorsWithProduct =
+        (lowerMsg.includes("màu") ||
+          lowerMsg.includes("mau") ||
+          lowerMsg.includes("color") ||
+          lowerMsg.includes("mầu")) &&
+        /\b(iphone|ipad|samsung|galaxy|xiaomi|redmi|oppo|vivo|realme|nokia)/i.test(
+          lowerMsg
+        );
+
+      if (isAskingColorsWithProduct) {
+        console.log(
+          `🎨 [COLOR QUERY DETECTED] Phát hiện câu hỏi về màu sắc: "${message}"`
+        );
+
+        // Tìm sản phẩm từ câu hỏi
+        const products = await productSearchService.searchProducts(message);
+
+        if (products.length === 0) {
+          const reply =
+            "Xin lỗi, tôi không tìm thấy sản phẩm bạn đang hỏi trong hệ thống.";
+          await session.addMessage("assistant", reply);
+          return {
+            success: false,
+            message,
+            reply,
+            sessionId: session.sessionId,
+          };
+        }
+
+        const product = products[0]; // Lấy sản phẩm đầu tiên (best match)
+
+        console.log(`📦 [PRODUCT FOUND] ${product.name}`);
+        console.log(
+          `🎨 [COLOR CHECK] colorVariants: ${
+            product.colorVariants?.length || 0
+          }, color: ${product.color?.length || 0}`
+        );
+
+        let colorContext = `Thông tin về sản phẩm: ${product.name}\n`;
+        colorContext += `Giá: ${product.price.toLocaleString("vi-VN")}đ\n\n`;
+
+        // Ưu tiên sử dụng colorVariants (logic mới) trước
+        if (product.colorVariants && product.colorVariants.length > 0) {
+          console.log(
+            `✅ [USING colorVariants] ${product.colorVariants.length} variants found`
+          );
+          colorContext += `Các màu sắc có sẵn:\n\n`;
+          product.colorVariants.forEach((variant, index) => {
+            colorContext += `${index + 1}. Màu ${variant.color}`;
+            if (variant.colorCode) {
+              colorContext += ` (Mã màu: ${variant.colorCode})`;
+            }
+            colorContext += `\n   - Tồn kho: ${
+              variant.stock > 0 ? `Còn ${variant.stock} sản phẩm` : "Hết hàng"
+            }`;
+            colorContext += `\n   - Trạng thái: ${
+              variant.stock > 0 ? "✅ Có sẵn" : "❌ Hết hàng"
+            }`;
+            if (variant.sku) {
+              colorContext += `\n   - Mã SKU: ${variant.sku}`;
+            }
+            if (variant.images && variant.images.length > 0) {
+              colorContext += `\n   - Số lượng ảnh: ${variant.images.length} ảnh`;
+            }
+            colorContext += `\n\n`;
+          });
+        }
+        // Fallback: sử dụng field color cũ nếu chưa có colorVariants
+        else if (product.color && product.color.length > 0) {
+          console.log(
+            `✅ [USING color field] ${product.color.length} colors found`
+          );
+          colorContext += `Các màu sắc có sẵn:\n`;
+          product.color.forEach((c, index) => {
+            colorContext += `${index + 1}. ${c}\n`;
+          });
+        } else {
+          console.log(`❌ [NO COLOR DATA] Product has no color information`);
+          colorContext += `Sản phẩm này chưa có thông tin về màu sắc trong hệ thống. Vui lòng liên hệ để được tư vấn thêm.`;
+        }
+
+        const prompt = `${colorContext}
+
+Câu hỏi của khách hàng: ${message}
+
+Hãy trả lời khách hàng về các màu sắc có sẵn một cách rõ ràng, ngắn gọn. Nếu màu nào hết hàng thì thông báo rõ ràng.`;
+
+        const reply = await this.callGeminiAPI(prompt);
+
+        // Chuẩn bị dữ liệu colorVariants để trả về
+        const colorVariantsData =
+          product.colorVariants && product.colorVariants.length > 0
+            ? product.colorVariants.map((v) => ({
+                color: v.color,
+                colorCode: v.colorCode,
+                stock: v.stock,
+                sku: v.sku,
+                images: v.images,
+                available: v.stock > 0,
+              }))
+            : product.color || [];
+
+        await session.addMessage("assistant", reply, {
+          productId: product._id,
+          productName: product.name,
+          colorVariants: colorVariantsData,
+        });
+
+        // Lưu vào context để câu hỏi tiếp theo có thể tham chiếu
+        session.context.currentProduct = product._id;
+        session.context.currentProductName = product.name;
+        await session.save();
+
+        return {
+          success: true,
+          message,
+          reply,
+          product: {
+            _id: product._id,
+            name: product.name,
+            price: product.price,
+            image: product.images?.[0] || "/images/placeholder.png",
+            colorVariants: colorVariantsData,
+            stock: product.stock,
+          },
+          actions: [
+            { type: "add_to_cart", label: "Thêm vào giỏ hàng" },
+            { type: "buy_now", label: "Mua ngay" },
+            { type: "installment", label: "Mua trả góp" },
+          ],
+          sessionId: session.sessionId,
+        };
+      }
+
       // ⭐ KIỂM TRA CÂU HỎI "CÓ BÁN X KHÔNG" - XỬ LÝ TRỰC TIẾP TỪ DATABASE
       const isAskingAvailability =
         /\b(có|bán|còn)\s+(bán|không|ko|hem|hông)\b/.test(lowerMsg) ||
@@ -306,6 +449,20 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
           session.context.currentProductName = product.name;
           await session.save();
 
+          // Chuẩn bị dữ liệu colorVariants
+          const hasColorVariants =
+            product.colorVariants && product.colorVariants.length > 0;
+          const colorVariantsData = hasColorVariants
+            ? product.colorVariants.map((v) => ({
+                color: v.color,
+                colorCode: v.colorCode,
+                stock: v.stock,
+                sku: v.sku,
+                images: v.images,
+                available: v.stock > 0,
+              }))
+            : product.color || [];
+
           return {
             success: true,
             message,
@@ -321,6 +478,7 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
               rating: product.rating,
               stock: product.stock,
               brand: product.brand,
+              colorVariants: colorVariantsData,
             },
             actions: inStock
               ? [
@@ -425,7 +583,7 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
 
       // ⭐ ƯU TIÊN XỬ LÝ CÂU HỎI FOLLOW-UP VỀ SẢN PHẨM TRONG CONTEXT
 
-      // 1. Xử lý câu hỏi về màu sắc
+      // 1. Xử lý câu hỏi về màu sắc (follow-up - có sản phẩm trong context)
       if (isAskingColors) {
         console.log(
           `🎨 Phát hiện câu hỏi về màu sắc, sử dụng context: ${session.context.currentProduct}`
@@ -452,7 +610,31 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
         let colorContext = `Thông tin về sản phẩm: ${product.name}\n`;
         colorContext += `Giá: ${product.price.toLocaleString("vi-VN")}đ\n\n`;
 
-        if (product.color && product.color.length > 0) {
+        // Ưu tiên sử dụng colorVariants (logic mới) trước
+        if (product.colorVariants && product.colorVariants.length > 0) {
+          colorContext += `Các màu sắc có sẵn:\n\n`;
+          product.colorVariants.forEach((variant, index) => {
+            colorContext += `${index + 1}. Màu ${variant.color}`;
+            if (variant.colorCode) {
+              colorContext += ` (Mã màu: ${variant.colorCode})`;
+            }
+            colorContext += `\n   - Tồn kho: ${
+              variant.stock > 0 ? `Còn ${variant.stock} sản phẩm` : "Hết hàng"
+            }`;
+            colorContext += `\n   - Trạng thái: ${
+              variant.stock > 0 ? "✅ Có sẵn" : "❌ Hết hàng"
+            }`;
+            if (variant.sku) {
+              colorContext += `\n   - Mã SKU: ${variant.sku}`;
+            }
+            if (variant.images && variant.images.length > 0) {
+              colorContext += `\n   - Số lượng ảnh: ${variant.images.length} ảnh`;
+            }
+            colorContext += `\n\n`;
+          });
+        }
+        // Fallback: sử dụng field color cũ nếu chưa có colorVariants
+        else if (product.color && product.color.length > 0) {
           colorContext += `Các màu sắc có sẵn:\n`;
           product.color.forEach((c, index) => {
             colorContext += `${index + 1}. ${c}\n`;
@@ -475,13 +657,27 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
 
 Câu hỏi của khách hàng: ${message}
 
-Hãy trả lời khách hàng về các màu sắc có sẵn một cách rõ ràng, ngắn gọn.`;
+Hãy trả lời khách hàng về các màu sắc có sẵn một cách rõ ràng, ngắn gọn. Nếu màu nào hết hàng thì thông báo rõ ràng.`;
 
         const reply = await this.callGeminiAPI(prompt, fullContext);
+
+        // Chuẩn bị dữ liệu colorVariants để trả về
+        const colorVariantsData =
+          product.colorVariants && product.colorVariants.length > 0
+            ? product.colorVariants.map((v) => ({
+                color: v.color,
+                colorCode: v.colorCode,
+                stock: v.stock,
+                sku: v.sku,
+                images: v.images,
+                available: v.stock > 0,
+              }))
+            : product.color || [];
+
         await session.addMessage("assistant", reply, {
           productId,
           productName: product.name,
-          colors: product.color,
+          colorVariants: colorVariantsData,
         });
 
         return {
@@ -493,7 +689,7 @@ Hãy trả lời khách hàng về các màu sắc có sẵn một cách rõ rà
             name: product.name,
             price: product.price,
             image: product.images?.[0] || "/images/placeholder.png",
-            colors: product.color,
+            colorVariants: colorVariantsData,
             stock: product.stock,
           },
           actions: [
@@ -622,6 +818,20 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
             stock: stockInfo.stock,
           });
 
+          // Chuẩn bị dữ liệu colorVariants
+          const hasColorVariants =
+            product.colorVariants && product.colorVariants.length > 0;
+          const colorVariantsData = hasColorVariants
+            ? product.colorVariants.map((v) => ({
+                color: v.color,
+                colorCode: v.colorCode,
+                stock: v.stock,
+                sku: v.sku,
+                images: v.images,
+                available: v.stock > 0,
+              }))
+            : product.color || [];
+
           return {
             success: true,
             message,
@@ -632,6 +842,7 @@ Hãy trả lời khách hàng về tồn kho một cách rõ ràng và ngắn g�
               price: product.price,
               image: product.images?.[0] || "/images/placeholder.png",
               stock: stockInfo.stock,
+              colorVariants: colorVariantsData,
             },
             actions: [
               { type: "add_to_cart", label: "Thêm vào giỏ hàng" },
@@ -739,6 +950,21 @@ Câu hỏi của khách hàng: ${message}`;
       // Nếu tìm thấy sản phẩm, thêm product và actions
       if (products.length > 0) {
         const firstProduct = products[0];
+
+        // Chuẩn bị dữ liệu colorVariants
+        const hasColorVariants =
+          firstProduct.colorVariants && firstProduct.colorVariants.length > 0;
+        const colorVariantsData = hasColorVariants
+          ? firstProduct.colorVariants.map((v) => ({
+              color: v.color,
+              colorCode: v.colorCode,
+              stock: v.stock,
+              sku: v.sku,
+              images: v.images,
+              available: v.stock > 0,
+            }))
+          : firstProduct.color || [];
+
         response.product = {
           _id: firstProduct._id,
           name: firstProduct.name,
@@ -755,6 +981,7 @@ Câu hỏi của khách hàng: ${message}`;
           displaySize: firstProduct.displaySize,
           chipset: firstProduct.chipset,
           cameraRear: firstProduct.cameraRear,
+          colorVariants: colorVariantsData,
         };
 
         response.actions = [
@@ -765,15 +992,31 @@ Câu hỏi của khách hàng: ${message}`;
 
         // Thêm danh sách sản phẩm nếu có nhiều hơn 1
         if (products.length > 1) {
-          response.products = products.map((p) => ({
-            _id: p._id,
-            name: p.name,
-            price: p.price,
-            discount: p.discount,
-            image: p.images?.[0] || "/images/placeholder.png",
-            rating: p.rating,
-            stock: p.stock,
-          }));
+          response.products = products.map((p) => {
+            const hasColorVariants =
+              p.colorVariants && p.colorVariants.length > 0;
+            const colorVariantsData = hasColorVariants
+              ? p.colorVariants.map((v) => ({
+                  color: v.color,
+                  colorCode: v.colorCode,
+                  stock: v.stock,
+                  sku: v.sku,
+                  images: v.images,
+                  available: v.stock > 0,
+                }))
+              : p.color || [];
+
+            return {
+              _id: p._id,
+              name: p.name,
+              price: p.price,
+              discount: p.discount,
+              image: p.images?.[0] || "/images/placeholder.png",
+              rating: p.rating,
+              stock: p.stock,
+              colorVariants: colorVariantsData,
+            };
+          });
         }
       }
 
@@ -1966,7 +2209,11 @@ Bạn có muốn:
       }
 
       // Kiểm tra xem sản phẩm có variants không
-      const hasColors = product.color && product.color.length > 0;
+      // Ưu tiên colorVariants (logic mới) trước, fallback sang color (logic cũ)
+      const hasColorVariants =
+        product.colorVariants && product.colorVariants.length > 0;
+      const hasColors =
+        hasColorVariants || (product.color && product.color.length > 0);
       const hasStorage = product.storage && product.storage > 0;
 
       // Kiểm tra xem có cần chọn variant không
@@ -1977,6 +2224,17 @@ Bạn có muốn:
 
       if (needsVariantSelection) {
         // Trả về thông tin để FE hiển thị form chọn variant
+        const colorVariantsData = hasColorVariants
+          ? product.colorVariants.map((v) => ({
+              color: v.color,
+              colorCode: v.colorCode,
+              stock: v.stock,
+              sku: v.sku,
+              images: v.images,
+              available: v.stock > 0,
+            }))
+          : product.color || [];
+
         return {
           success: false,
           requireVariant: true,
@@ -1988,7 +2246,7 @@ Bạn có muốn:
             image: product.images?.[0] || "/images/placeholder.png",
           },
           variants: {
-            colors: hasColors ? product.color : [],
+            colorVariants: colorVariantsData,
             storage: hasStorage ? [product.storage] : [],
             ram: product.ram ? [product.ram] : [],
           },
@@ -2079,7 +2337,11 @@ Bạn có muốn:
       }
 
       // Kiểm tra xem sản phẩm có variants không
-      const hasColors = product.color && product.color.length > 0;
+      // Ưu tiên colorVariants (logic mới) trước, fallback sang color (logic cũ)
+      const hasColorVariants =
+        product.colorVariants && product.colorVariants.length > 0;
+      const hasColors =
+        hasColorVariants || (product.color && product.color.length > 0);
       const hasStorage = product.storage && product.storage > 0;
 
       // Kiểm tra xem có cần chọn variant không
@@ -2089,6 +2351,17 @@ Bạn có muốn:
         needsColorSelection || needsStorageSelection;
 
       if (needsVariantSelection) {
+        const colorVariantsData = hasColorVariants
+          ? product.colorVariants.map((v) => ({
+              color: v.color,
+              colorCode: v.colorCode,
+              stock: v.stock,
+              sku: v.sku,
+              images: v.images,
+              available: v.stock > 0,
+            }))
+          : product.color || [];
+
         return {
           success: false,
           requireVariant: true,
@@ -2100,7 +2373,7 @@ Bạn có muốn:
             image: product.images?.[0] || "/images/placeholder.png",
           },
           variants: {
-            colors: hasColors ? product.color : [],
+            colorVariants: colorVariantsData,
             storage: hasStorage ? [product.storage] : [],
             ram: product.ram ? [product.ram] : [],
           },

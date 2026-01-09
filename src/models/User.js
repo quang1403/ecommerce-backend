@@ -14,12 +14,26 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: true,
+      required: false, // Không bắt buộc vì có thể đăng nhập bằng Google
     },
     phone: {
       type: String,
       required: false,
       default: "",
+    },
+    googleId: {
+      type: String,
+      required: false,
+      sparse: true, // Cho phép nhiều giá trị null
+    },
+    avatar: {
+      type: String,
+      required: false,
+    },
+    authProvider: {
+      type: String,
+      enum: ["local", "google"],
+      default: "local",
     },
     addresses: [
       {
@@ -67,7 +81,8 @@ const userSchema = new mongoose.Schema(
 
 // Mã hóa mật khẩu trước khi lưu
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+  // Chỉ hash password nếu có password và password đã thay đổi
+  if (!this.password || !this.isModified("password")) return next();
   this.password = await bcrypt.hash(this.password, 10);
   next();
 });

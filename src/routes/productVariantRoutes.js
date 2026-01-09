@@ -3,7 +3,19 @@ const express = require("express");
 const router = express.Router();
 const productVariantController = require("../controllers/productVariantController");
 
-// Lấy danh sách các lựa chọn cấu hình của sản phẩm
+// RAM/Storage variants (existing)
 router.get("/:id/variants", productVariantController.getProductVariants);
+
+// Color variants routes
+router.get("/:id/color-variants", productVariantController.getColorVariants);
+router.post("/:id/color-variants", productVariantController.addColorVariant);
+router.put(
+  "/:id/color-variants/:variantId",
+  productVariantController.updateColorVariant
+);
+router.delete(
+  "/:id/color-variants/:variantId",
+  productVariantController.deleteColorVariant
+);
 
 module.exports = router;

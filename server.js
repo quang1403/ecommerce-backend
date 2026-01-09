@@ -4,6 +4,8 @@ const installmentRoutes = require("./src/routes/installmentRoutes");
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const session = require("express-session");
+const passport = require("./src/config/passport");
 const connectDB = require("./src/config/db");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
@@ -27,16 +29,32 @@ app.use(
     origin: [
       "http://localhost:3000",
       "https://ecommerce-fontend-drab.vercel.app",
-      "*",
     ], // cho phép frontend gọi API
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
 // Middleware parse body
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Session configuration (cần cho passport)
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "your_session_secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    },
+  })
+);
+
+// Passport initialization
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Cho phép truy cập ảnh trong thư mục uploads và public/images
 app.use("/uploads", express.static("uploads"));

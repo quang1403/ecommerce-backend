@@ -121,8 +121,8 @@ exports.deleteNews = async (req, res) => {
 // Lấy tin tức từ RSS
 exports.getNewsFromRSS = async (req, res) => {
   try {
-    // Nguồn RSS chuẩn về tin công nghệ Việt Nam (GenK)
-    const rssUrl = req.query.url || "https://genk.vn/rss/ict.rss";
+    // Nguồn RSS chuẩn về tin công nghệ Việt Nam (VnExpress)
+    const rssUrl = req.query.url || "https://vnexpress.net/rss/so-hoa.rss";
     const feed = await parser.parseURL(rssUrl);
 
     // Lưu từng bài viết vào database nếu chưa tồn tại (dựa vào title và publishedDate)

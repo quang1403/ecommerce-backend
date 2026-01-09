@@ -107,27 +107,202 @@ class ChatService {
     const productSearchService = new ProductSearchService();
 
     try {
-      // Search for products
-      const searchResults = await productSearchService.searchProducts(message);
+      // Kiểm tra nếu đang hỏi về màu sắc của sản phẩm cụ thể
+      const lowerMsg = message.toLowerCase().trim();
+      const isAskingColors =
+        (lowerMsg.includes("màu") ||
+          lowerMsg.includes("mau") ||
+          lowerMsg.includes("color") ||
+          lowerMsg.includes("mầu")) &&
+        /\b(iphone|ipad|samsung|galaxy|xiaomi|redmi|oppo|vivo|realme|nokia)/i.test(
+          lowerMsg
+        );
+
+      console.log("🎨 Kiểm tra câu hỏi màu sắc:", {
+        message: message,
+        isAskingColors: isAskingColors,
+      });
+
+      // 📊 Tích lũy thông tin từ conversation context
+      const conversationContext = this.extractSearchContext(message, session);
+      console.log("📊 Conversation context:", conversationContext);
+
+      // Tạo enhanced query từ context
+      let enhancedQuery = message;
+      if (conversationContext.hasContext) {
+        const contextParts = [];
+        if (conversationContext.brand)
+          contextParts.push(conversationContext.brand);
+        if (conversationContext.budget)
+          contextParts.push(`${conversationContext.budget} triệu`);
+        if (conversationContext.features.length > 0) {
+          contextParts.push(...conversationContext.features);
+        }
+
+        if (contextParts.length > 0) {
+          enhancedQuery = `${contextParts.join(" ")} ${message}`;
+          console.log("🔍 Enhanced query:", enhancedQuery);
+        }
+      }
+
+      // Search for products with enhanced query
+      const searchResults = await productSearchService.searchProducts(
+        enhancedQuery
+      );
 
       if (!searchResults.success) {
-        // Nếu không tìm thấy, trả message rõ ràng KHÔNG BỊA GIÁ
+        // Phân tích intent để trả lời phù hợp
+        const lowerMsg = message.toLowerCase();
+
+        // Kiểm tra nếu hỏi về sản phẩm NGOÀI phạm vi cửa hàng
+        const outOfScopeKeywords = [
+          "playstation",
+          "ps4",
+          "ps5",
+          "xbox",
+          "nintendo",
+          "switch",
+          "laptop",
+          "máy tính",
+          "pc",
+          "macbook",
+          "tivi",
+          "tv",
+          "màn hình",
+          "monitor",
+          "camera",
+          "máy ảnh", // camera riêng, không phải camera phone
+        ];
+
+        const isOutOfScope = outOfScopeKeywords.some((keyword) =>
+          lowerMsg.includes(keyword)
+        );
+
+        if (isOutOfScope) {
+          return {
+            success: true,
+            message:
+              "Xin lỗi bạn, Phone Store chuyên về điện thoại, tablet và phụ kiện di động (tai nghe, sạc, ốp lưng...). " +
+              "Chúng mình không kinh doanh các sản phẩm như máy chơi game console, laptop, camera riêng lẻ.\n\n" +
+              "Tuy nhiên, nếu bạn quan tâm đến:\n" +
+              "📱 Điện thoại chơi game mượt mà\n" +
+              "📱 Điện thoại camera chụp ảnh đẹp\n" +
+              "📱 Tablet để giải trí hoặc làm việc\n\n" +
+              "Hãy cho mình biết để tư vấn bạn nhé! 😊",
+            intent: "product_inquiry",
+            confidence: 1.0,
+          };
+        }
+
+        // ⚠️ Nếu đã có context nhưng vẫn không tìm thấy → Thông báo rõ ràng
+        if (conversationContext.hasContext) {
+          const contextSummary = [];
+          if (conversationContext.brand)
+            contextSummary.push(`Thương hiệu: ${conversationContext.brand}`);
+          if (conversationContext.budget)
+            contextSummary.push(
+              `Ngân sách: ${conversationContext.budget} triệu`
+            );
+          if (conversationContext.features.length > 0) {
+            contextSummary.push(
+              `Yêu cầu: ${conversationContext.features.join(", ")}`
+            );
+          }
+
+          return {
+            success: true,
+            message:
+              `Mình đã tìm theo yêu cầu của bạn:\n${contextSummary.join(
+                "\n"
+              )}\n\n` +
+              "Nhưng rất tiếc, hiện tại không có sản phẩm phù hợp trong hệ thống. " +
+              "Bạn có thể:\n" +
+              "💡 Điều chỉnh ngân sách (cao hơn hoặc thấp hơn)\n" +
+              "💡 Xem xét thương hiệu khác (Samsung, Oppo, Vivo, Realme...)\n" +
+              "💡 Linh hoạt về tính năng\n\n" +
+              "Hoặc bạn muốn xem các sản phẩm tương tự trong khoảng giá gần nhất không? 😊",
+            intent: "product_inquiry",
+            confidence: 1.0,
+          };
+        }
+
+        // Nếu không tìm thấy và chưa có đủ context, hỏi thêm (nhưng CHỈ 1 lần)
         return {
           success: true,
           message:
-            searchResults.message ||
-            "Xin lỗi, chúng tôi không tìm thấy sản phẩm bạn yêu cầu trong hệ thống. Bạn có thể kiểm tra lại tên sản phẩm hoặc hỏi về sản phẩm khác không?",
+            "Xin lỗi, hiện tại chúng mình không tìm thấy sản phẩm phù hợp với yêu cầu của bạn trong hệ thống. " +
+            "Bạn có thể cho mình biết thêm về:\n" +
+            "📱 Thương hiệu bạn quan tâm (iPhone, Samsung, Xiaomi, Oppo, Vivo...)\n" +
+            "💰 Ngân sách dự kiến của bạn\n" +
+            "🎯 Mục đích sử dụng chính (chơi game, chụp ảnh, công việc, giải trí...)\n" +
+            "⚡ Tính năng ưu tiên (camera, pin, hiệu năng, màn hình...)\n\n" +
+            "để mình có thể tư vấn chính xác hơn cho bạn nhé! 😊",
           intent: "product_inquiry",
+          confidence: 1.0,
         };
       }
 
       const { products, searchInfo } = searchResults;
 
+      // Xử lý đặc biệt cho câu hỏi màu sắc
+      if (isAskingColors && products.length > 0) {
+        console.log("🎨 Xử lý câu hỏi màu sắc cho sản phẩm:", products[0].name);
+        const product = products[0];
+
+        // Ưu tiên colorVariants, fallback về color legacy
+        if (product.colorVariants && product.colorVariants.length > 0) {
+          const colorsInfo = product.colorVariants.map((variant) => {
+            return `${variant.color} (mã ${variant.colorCode}, còn ${variant.stock} máy)`;
+          });
+
+          const colorResponse = `${product.name} hiện có ${
+            product.colorVariants.length
+          } màu sắc:\n\n${colorsInfo
+            .map((info, idx) => `${idx + 1}. ${info}`)
+            .join(
+              "\n"
+            )}\n\nBạn thích màu nào nhất? Tôi có thể giúp bạn kiểm tra tình trạng hàng hoặc đặt hàng ngay.`;
+
+          console.log("✅ Trả lời từ colorVariants:", colorResponse);
+
+          return {
+            success: true,
+            message: colorResponse,
+            intent: "product_inquiry",
+            data: {
+              products: [product],
+              searchInfo: searchInfo,
+              colorVariants: product.colorVariants,
+            },
+          };
+        } else if (product.color && product.color.length > 0) {
+          const colorResponse = `${product.name} hiện có ${
+            product.color.length
+          } màu: ${product.color.join(
+            ", "
+          )}.\n\nBạn muốn xem chi tiết màu nào?`;
+
+          console.log("✅ Trả lời từ color legacy:", colorResponse);
+
+          return {
+            success: true,
+            message: colorResponse,
+            intent: "product_inquiry",
+            data: {
+              products: [product],
+              searchInfo: searchInfo,
+              colors: product.color,
+            },
+          };
+        }
+      }
+
       // Generate AI response
       const prompt = this.promptService.createProductInquiryPrompt(
         products,
         message,
-        this.getConversationContext(session)
+        this.getConversationContext(session),
+        isAskingColors
       );
 
       const aiResponse = await this.generateAIResponse(prompt);
@@ -254,11 +429,190 @@ class ChatService {
    */
   async handleProductCompare(message, session, intent) {
     try {
-      // Implementation for product comparison
-      // This would use comparison logic from existing chatService
+      const ProductSearchService = require("./productSearch.service");
+      const productSearchService = new ProductSearchService();
+
+      // Extract product names from comparison query
+      // Patterns: "A vs B", "A và B", "so sánh A với B", "A hay B"
+      const vsPattern =
+        /(.+?)\s+(?:vs|versus|với|và|hay)\s+(.+?)(?:\s+(?:tốt hơn|nào tốt|hiệu năng|camera|pin|giá).*)?$/i;
+      const soSanhPattern =
+        /so sánh\s+(.+?)\s+(?:với|và|vs)\s+(.+?)(?:\s+(?:tốt hơn|nào tốt|hiệu năng|camera|pin|giá).*)?$/i;
+
+      let product1Name = null;
+      let product2Name = null;
+
+      let match = message.match(soSanhPattern) || message.match(vsPattern);
+      if (match) {
+        product1Name = match[1].trim();
+        product2Name = match[2].trim();
+      }
+
+      // If pattern doesn't match, try to extract 2 product mentions
+      if (!product1Name || !product2Name) {
+        // Try to find phone model patterns
+        const phonePatterns = [
+          /\b(iphone\s+\d+[\w\s]*?(?:pro|plus|max|mini)?)/gi,
+          /\b(galaxy\s+[a-z]\d+\s*(?:5g|4g|ultra|plus|fe)?)/gi,
+          /\b(galaxy\s+z\s+(?:fold|flip)\s*\d*)/gi,
+          /\b(xiaomi\s+\d+[\w\s]*?(?:pro|plus|ultra|t)?)/gi,
+          /\b(redmi\s+(?:note\s*)?\d+[\w\s]*?(?:pro|plus)?)/gi,
+          /\b(oppo\s+[a-z]*\s*\d+[\w\s]*?(?:pro|plus)?)/gi,
+        ];
+
+        const foundProducts = [];
+        const seen = new Set(); // Track lowercase versions to avoid duplicates
+
+        for (const pattern of phonePatterns) {
+          const matches = message.matchAll(pattern);
+          for (const m of matches) {
+            if (m[1]) {
+              const normalized = m[1].trim().toLowerCase();
+              // Check if this is not a subset of already found product
+              let isDuplicate = false;
+              for (const existing of seen) {
+                if (
+                  normalized.includes(existing) ||
+                  existing.includes(normalized)
+                ) {
+                  isDuplicate = true;
+                  break;
+                }
+              }
+
+              if (!isDuplicate) {
+                foundProducts.push(m[1].trim());
+                seen.add(normalized);
+              }
+            }
+          }
+        }
+
+        if (foundProducts.length >= 2) {
+          product1Name = foundProducts[0];
+          product2Name = foundProducts[1];
+        }
+      }
+
+      if (!product1Name || !product2Name) {
+        return {
+          success: true,
+          message:
+            "Vui lòng cho tôi biết 2 sản phẩm bạn muốn so sánh. Ví dụ: 'So sánh iPhone 15 và Samsung Galaxy S24' hoặc 'iPhone 15 vs Galaxy S24'",
+          intent: "product_compare",
+        };
+      }
+
+      // Search for both products
+      const [search1, search2] = await Promise.all([
+        productSearchService.searchProducts(product1Name),
+        productSearchService.searchProducts(product2Name),
+      ]);
+
+      const product1 =
+        search1.success && search1.products.length > 0
+          ? search1.products[0]
+          : null;
+      const product2 =
+        search2.success && search2.products.length > 0
+          ? search2.products[0]
+          : null;
+
+      // Case 1: Both products found - do comparison
+      if (product1 && product2) {
+        const prompt = this.promptService.createComparePrompt(
+          [product1, product2],
+          message
+        );
+
+        const aiResponse = await this.generateAIResponse(prompt);
+
+        return {
+          success: true,
+          message: aiResponse,
+          intent: "product_compare",
+          data: {
+            products: [product1, product2],
+            comparison: true,
+          },
+        };
+      }
+
+      // Case 2: Only one product found - suggest similar products to compare
+      if (product1 && !product2) {
+        // Find similar products in same price range or brand
+        const similarProducts = await productSearchService.searchProducts(
+          `${product1.brand?.name || ""} điện thoại`
+        );
+
+        const suggestions = similarProducts.products
+          .filter((p) => p._id.toString() !== product1._id.toString())
+          .slice(0, 3);
+
+        let message = `Tôi tìm thấy sản phẩm ${product1.name} nhưng không tìm thấy "${product2Name}" trong kho.\n\n`;
+
+        if (suggestions.length > 0) {
+          message += `Bạn có muốn so sánh ${product1.name} với:\n`;
+          suggestions.forEach((p, i) => {
+            message += `${i + 1}. ${p.name} - ${p.price.toLocaleString(
+              "vi-VN"
+            )}đ\n`;
+          });
+        } else {
+          message += `Bạn có thể cho tôi biết sản phẩm thứ 2 chính xác hơn không?`;
+        }
+
+        return {
+          success: true,
+          message,
+          intent: "product_compare",
+          data: {
+            foundProduct: product1,
+            suggestions,
+            missingProduct: product2Name,
+          },
+        };
+      }
+
+      if (!product1 && product2) {
+        // Similar logic but for product2
+        const similarProducts = await productSearchService.searchProducts(
+          `${product2.brand?.name || ""} điện thoại`
+        );
+
+        const suggestions = similarProducts.products
+          .filter((p) => p._id.toString() !== product2._id.toString())
+          .slice(0, 3);
+
+        let message = `Tôi tìm thấy sản phẩm ${product2.name} nhưng không tìm thấy "${product1Name}" trong kho.\n\n`;
+
+        if (suggestions.length > 0) {
+          message += `Bạn có muốn so sánh ${product2.name} với:\n`;
+          suggestions.forEach((p, i) => {
+            message += `${i + 1}. ${p.name} - ${p.price.toLocaleString(
+              "vi-VN"
+            )}đ\n`;
+          });
+        } else {
+          message += `Bạn có thể cho tôi biết sản phẩm thứ nhất chính xác hơn không?`;
+        }
+
+        return {
+          success: true,
+          message,
+          intent: "product_compare",
+          data: {
+            foundProduct: product2,
+            suggestions,
+            missingProduct: product1Name,
+          },
+        };
+      }
+
+      // Case 3: Neither product found
       return {
         success: true,
-        message: "Tính năng so sánh sản phẩm đang được phát triển.",
+        message: `Rất tiếc, tôi không tìm thấy cả 2 sản phẩm "${product1Name}" và "${product2Name}" trong kho. Bạn có thể cung cấp tên sản phẩm chính xác hơn không?`,
         intent: "product_compare",
       };
     } catch (error) {
@@ -695,6 +1049,77 @@ Nếu bạn cần hỗ trợ thêm, vui lòng liên hệ hotline!`;
         intent: "stock_check",
       };
     }
+  }
+
+  /**
+   * Extract search context from conversation history
+   * Tích lũy thông tin: brand, budget, features từ conversation
+   */
+  extractSearchContext(currentMessage, session) {
+    const context = {
+      brand: null,
+      budget: null,
+      features: [],
+      hasContext: false,
+    };
+
+    // Lấy lịch sử conversation
+    const messages = session.messages || [];
+    const allMessages = [...messages.map((m) => m.content), currentMessage]
+      .join(" ")
+      .toLowerCase();
+
+    // Extract brand
+    const brandPatterns = {
+      xiaomi: /\b(xiaomi|xiaomu|redmi|poco)\b/i,
+      samsung: /\b(samsung|sam sung|galaxy)\b/i,
+      iphone: /\b(iphone|ip|apple)\b/i,
+      oppo: /\b(oppo|reno|find)\b/i,
+      vivo: /\b(vivo)\b/i,
+      realme: /\b(realme)\b/i,
+    };
+
+    for (const [brand, pattern] of Object.entries(brandPatterns)) {
+      if (pattern.test(allMessages)) {
+        context.brand = brand;
+        context.hasContext = true;
+        break;
+      }
+    }
+
+    // Extract budget (10 triệu, 10tr, 10000000...)
+    const budgetMatch = allMessages.match(
+      /(\d+)\s*(?:triệu|tr|trieu|million|m|k|ngàn)/i
+    );
+    if (budgetMatch) {
+      const num = parseInt(budgetMatch[1]);
+      const unit = budgetMatch[0].toLowerCase();
+
+      if (unit.includes("k") || unit.includes("ngàn")) {
+        context.budget = num / 1000; // 10000k = 10 triệu
+      } else {
+        context.budget = num; // 10 triệu
+      }
+      context.hasContext = true;
+    }
+
+    // Extract features
+    const featurePatterns = {
+      gaming:
+        /\b(gaming|game|chơi game|choi game|máy chơi game|hiệu năng|performance)\b/i,
+      camera: /\b(camera|chụp ảnh|chup anh|máy chụp ảnh|selfie|quay video)\b/i,
+      pin: /\b(pin|battery|pin trâu|pin khỏe|pin lớn|dung lượng pin)\b/i,
+      "màn hình": /\b(màn hình|man hinh|display|screen|màn to|màn lớn)\b/i,
+    };
+
+    for (const [feature, pattern] of Object.entries(featurePatterns)) {
+      if (pattern.test(allMessages)) {
+        context.features.push(feature);
+        context.hasContext = true;
+      }
+    }
+
+    return context;
   }
 
   async handleRecommendation(message, session, intent) {
